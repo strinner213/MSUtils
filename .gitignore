@@ -198,6 +198,7 @@ Thumbs.db
 *.stseed
 *.stcell
 *.obj
+*.gif
 
 # pixi environments
 .pixi
