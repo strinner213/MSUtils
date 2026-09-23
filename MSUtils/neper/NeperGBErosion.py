@@ -204,10 +204,10 @@ class NeperGBErosion:
                     "num_GB": len(self.ridge_metadata),
                 }
             )
-            gb_normals = np.zeros((self.num_crystals + len(self.ridge_metadata), 3))
+            self.gb_normals = np.zeros((self.num_crystals + len(self.ridge_metadata), 3))
             for tag, (normal, _, _) in self.ridge_metadata.items():
-                gb_normals[tag] = normal
-            group.create_dataset("GB_normals", data=gb_normals)
+                self.gb_normals[tag] = normal
+            group.create_dataset("GB_normals", data=self.gb_normals)
             group.create_dataset("rotation_matrices", data=self.rotation_matrices)
             if save_orientations:
                 grain_voxels = self.eroded_image < self.num_crystals

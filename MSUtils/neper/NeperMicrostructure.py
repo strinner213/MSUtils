@@ -77,7 +77,7 @@ class NeperMicrostructure(MicrostructureImage):
             "coo,vol,area,sphericity,facenb",
             *map(str, extra_args),
             "-format",
-            "tesr,obj",
+            "tess,tesr,obj",
             "-o",
             output_stem.name,
         ]
