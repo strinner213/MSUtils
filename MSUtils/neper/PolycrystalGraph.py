@@ -64,7 +64,6 @@ class PolycrystalGraph:
         print(f"Max degree:  {max(degrees):,}")
         print(f"Min degree:  {min(degrees):,}\n")
 
-
     def visualize_3d(
         self,
         filepath: Path,
@@ -277,8 +276,10 @@ class PolycrystalGraph:
     def write_h5(
         self,
         filename: Path,
+        grp: str,
         node_features: list[str],
-        edge_features: list[str]
+        edge_features: list[str],
+        export_stats: bool = False,
     ) -> None:
         nodes = list(self.G.nodes())
         node_to_idx = {node: i for i, node in enumerate(nodes)}
@@ -311,11 +312,50 @@ class PolycrystalGraph:
         edge_index = np.asarray(edges, dtype=np.int64).T
         E = np.asarray(E, dtype=np.float32)
 
-        with h5py.File(filename.with_suffix('.h5'), "w") as f:
-            f["edge_index"] = edge_index
-            f["node_features"] = X
-            f["edge_features"] = E
-            f["node_ids"] = np.asarray(nodes, dtype="S")
+        with h5py.File(filename.with_suffix('.h5'), "a") as h5_file:
+            compression_opts = 6
+
+            grp = h5_file.require_group(grp)
+
+            grp["edge_index"] = edge_index
+            dset = grp.create_dataset(
+                'node_features',
+                data=X,
+                dtype='f8',
+                compression='gzip',
+                compression_opts=compression_opts
+            )
+            dset.attrs['n_nodes'] = self.G.number_of_nodes()
+
+            dset = grp.create_dataset(
+                'edge_features',
+                data=E,
+                dtype='f8',
+                compression='gzip',
+                compression_opts=compression_opts
+            )
+            dset.attrs['n_edges'] = self.G.number_of_edges()
+
+            grp["node_ids"] = np.asarray(nodes, dtype="S")
+
+            if export_stats:
+                degrees = [d for _, d in self.G.degree()]
+                grp_stats = grp.require_group("stats")
+
+                grp_stats.create_dataset(
+                    'density',
+                    data=nx.density(self.G),
+                    dtype='f8'
+                )
+
+                dset = grp_stats.create_dataset(
+                    'degrees',
+                    data=degrees,
+                    dtype='f8'
+                )
+                dset.attrs['average'] = sum(degrees) / len(degrees)
+                dset.attrs['min'] = min(degrees)
+                dset.attrs['max'] = max(degrees)
 
 
 class PolycrystalGrainGraph(PolycrystalGraph):
@@ -340,6 +380,7 @@ class PolycrystalGrainGraph(PolycrystalGraph):
         self.G.add_nodes_from(
             (_gname(grain_id), 
              {"position": grain_data, 
+              "type": 0,
               "boundary": 0})
             for grain_id, grain_data in tessellation.seeds.items()
         )
@@ -387,14 +428,16 @@ class PolycrystalFacetEnhancedGraph(PolycrystalGraph):
         self.G.add_nodes_from(
             (_gname(grain_id), 
                 {"position": grain_data, 
-                "boundary": 0})
+                 "type": 0,
+                 "boundary": 0})
             for grain_id, grain_data in tessellation.seeds.items()
         )
         # Add one node per face (compute centroid for position)
         self.G.add_nodes_from(
             (_fname(face_id), 
                 {"position": np.mean([tessellation.vertices[vertex_id] for vertex_id in face['vertices']], axis=0),
-                "boundary": 0})
+                 "type": 1,
+                 "boundary": 0})
             for face_id, face in tessellation.faces.items()
         )
 
@@ -455,22 +498,25 @@ class PolycrystalVertexEnhancedGraph(PolycrystalGraph):
         self.G.add_nodes_from(
             (_gname(grain_id), 
              {"position": grain_data, 
+              "type": 0,
               "boundary": 0})
             for grain_id, grain_data in tessellation.seeds.items()
+        )
+        # Add one node per face (compute centroid for position)
+        self.G.add_nodes_from(
+            (_fname(face_id), 
+                {"position": np.mean([tessellation.vertices[vertex_id] for vertex_id in face['vertices']], axis=0),
+                "type": 1,
+                "boundary": 0})
+            for face_id, face in tessellation.faces.items()
         )
         # Add one node per vertex (position given in tessellation)
         self.G.add_nodes_from(
             (_vname(vertex_id), 
              {"position": vertex_data, 
+              "type": 2,
               "boundary": 0})
             for vertex_id, vertex_data in tessellation.vertices.items()
-        )
-        # Add one node per face (compute centroid for position)
-        self.G.add_nodes_from(
-            (_fname(face_id), 
-             {"position": np.mean([tessellation.vertices[vertex_id] for vertex_id in face['vertices']], axis=0),
-              "boundary": 0})
-            for face_id, face in tessellation.faces.items()
         )
 
         # ---------------------------------------------------------------
