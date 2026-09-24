@@ -13,17 +13,17 @@ def main():
     graph = PolycrystalGrainGraph(tess, [], [])
     graph.graph_stats()
     graph.visualize_3d(Path(f"{_PROJECT_ROOT}/data/{name}_grain_graph"), node_feature="type")
-    graph.write_h5(Path(f"{_PROJECT_ROOT}/data/{name}_grain_graph"), node_features=["position", "type", "boundary"], edge_features=[])
+    graph.write_h5(Path(f"{_PROJECT_ROOT}/data/{name}_graph"), grp="graph_grains", export_stats=True)
 
-    graph = PolycrystalFacetEnhancedGraph(tess, [], [])
+    graph = PolycrystalFacetEnhancedGraph(tess, [], ["distance"])
     graph.graph_stats()
     graph.visualize_3d(Path(f"{_PROJECT_ROOT}/data/{name}_facet_graph"), node_feature="type")
-    graph.write_h5(Path(f"{_PROJECT_ROOT}/data/{name}_facet_graph"), node_features=["position", "type", "boundary"], edge_features=[])
+    graph.write_h5(Path(f"{_PROJECT_ROOT}/data/{name}_graph"), grp="graph_facet_enhanced", export_stats=True)
 
-    graph = PolycrystalVertexEnhancedGraph(tess, [], [])
+    graph = PolycrystalVertexEnhancedGraph(tess, [], ["distance"])
     graph.graph_stats()
     graph.visualize_3d(Path(f"{_PROJECT_ROOT}/data/{name}_vertex_graph"), node_feature="type")
-    graph.write_h5(Path(f"{_PROJECT_ROOT}/data/{name}_vertex_graph"), node_features=["position", "type", "boundary"], edge_features=[])
+    graph.write_h5(Path(f"{_PROJECT_ROOT}/data/{name}_graph"), grp="graph_vertex_enhanced", export_stats=True)
 
 
 if __name__ == "__main__":
