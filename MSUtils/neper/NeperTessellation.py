@@ -23,11 +23,11 @@ class NeperTessellation():
         self.seed_data = data["seed_data"]
         self.vertices = data["vertices"]
         self.edges = data["edges"]
-        self.faces = data["faces"]
+        self.facets = data["facets"]
         self.polyhedra = data["polyhedra"]
 
-        self.edge_faces = data["edge_faces"]
-        self.face_grains = data["face_grains"]
+        self.edge_facets = data["edge_facets"]
+        self.facet_grains = data["facet_grains"]
         self.edge_neighbors = data["edge_neighbors"]
 
         self.periodicity = data["periodicity"]
@@ -117,10 +117,10 @@ class NeperTessellation():
             i += 1
 
         # ---------------------------------------------------------------
-        # FACES
+        # facets
         #
-        # Each face has four lines:
-        #   face_id n_vertices v1 ... vn
+        # Each facet has four lines:
+        #   facet_id n_vertices v1 ... vn
         #   n_edges e1 ... en
         #   d a b c
         #   state interpolation x y z
@@ -130,11 +130,11 @@ class NeperTessellation():
         n = int(lines[i])
         i += 1
 
-        faces = {}
+        facets = {}
 
         for _ in range(n):
 
-            # Face ID + vertices
+            # facet ID + vertices
             i = _next_line(i, lines)
             f = lines[i].split()
 
@@ -165,7 +165,7 @@ class NeperTessellation():
             point = tuple(map(float, f[2:5]))
             i += 1
 
-            faces[fid] = {
+            facets[fid] = {
                 "vertices": vertex_ids,
                 "edges": edge_ids,
                 "equation": equation,
@@ -178,8 +178,8 @@ class NeperTessellation():
         # POLYHEDRA / GRAINS
         #
         # Each grain/polyhedron:
-        #     polyhedron_id n_faces f1 f2 ...
-        # Face IDs are signed.
+        #     polyhedron_id n_facets f1 f2 ...
+        # facet IDs are signed.
         # ---------------------------------------------------------------
 
         i = _next_line(_section("**polyhedron", lines) + 1, lines)
@@ -202,26 +202,27 @@ class NeperTessellation():
         # Derived connectivity
         # ---------------------------------------------------------------
 
-        # edge -> faces
-        edge_faces = defaultdict(set)
+        # edge -> facets
+        edge_facets = defaultdict(set)
 
-        for fid, face in faces.items():
-            for eid in face["edges"]:
-                edge_faces[abs(eid)].add(fid)
+        for fid, facet in facets.items():
+            for eid in facet["edges"]:
+                edge_facets[abs(eid)].add(fid)
 
-        # face -> grains
-        face_grains = defaultdict(set)
+        # facet -> grains
+        facet_grains = defaultdict(set)
 
-        for gid, face_ids in polyhedra.items():
-            for fid in face_ids:
-                face_grains[abs(fid)].add(gid)
+        for gid, facet_ids in polyhedra.items():
+            for fid in facet_ids:
+                facet_grains[abs(fid)].add(gid)
+                print(fid, gid)
 
         # edge -> grains
         edge_neighbors = {
             eid: {
                 gid
-                for fid in edge_faces[eid]
-                for gid in face_grains[fid]
+                for fid in edge_facets[eid]
+                for gid in facet_grains[fid]
             }
             for eid in edges
         }
@@ -253,7 +254,7 @@ class NeperTessellation():
             "distances": (0.0, 0.0, 0.0),
             "vertices": {},
             "edges": {},
-            "faces": {},
+            "facets": {},
         }
 
         # Find periodicity section, if present
@@ -340,10 +341,10 @@ class NeperTessellation():
             )
 
             # -----------------------------------------------------------
-            # Periodic faces
+            # Periodic facets
             # -----------------------------------------------------------
 
-            periodic["faces"] = parse_periodic_section(
+            periodic["facets"] = parse_periodic_section(
                 "*face", 6
             )
 
@@ -352,10 +353,10 @@ class NeperTessellation():
             "seed_data": seed_data,
             "vertices": vertices,
             "edges": edges,
-            "faces": faces,
+            "facets": facets,
             "polyhedra": polyhedra,
-            "edge_faces": dict(edge_faces),
-            "face_grains": dict(face_grains),
+            "edge_facets": dict(edge_facets),
+            "facet_grains": dict(facet_grains),
             "edge_neighbors": edge_neighbors,
             "periodicity": periodic
         }
