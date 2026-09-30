@@ -27,8 +27,11 @@ def _fname(facet_id: int, shift=False):
 class PolycrystalGraph:
     def __init__(
         self,
+        periodicity: str = "all",
     ) -> Self:
+        assert periodicity in ["none", "all"], 'Invalid periodicity property of the tessellation. Needs to be "none" or "all".'
         self.G = nx.MultiDiGraph()
+        self.periodicity = periodicity
 
     @classmethod
     def from_tess(
@@ -37,7 +40,7 @@ class PolycrystalGraph:
         node_features: list[str],
         edge_features: list[str],
     ):
-        graph = cls()
+        graph = cls(tessellation.periodicity)
     
         # Pass deep-copy to avoid altered tessellation
         graph._construct_topology(copy.deepcopy(tessellation))
@@ -679,36 +682,41 @@ class PolycrystalGrainGraph(PolycrystalGraph):
                     area=tessellation._get_facet_surface(facet_id)
                     )
 
-        # Wrap around periodic boundary
-        for secondary_node_idx, data in tessellation.periodicity["facets"].items():
-            assert len( tessellation.facet_grains[data["primary"]]) == 1
-            _grain_i = _gname(tessellation.facet_grains[data["primary"]].pop(), shift=True)
-            assert len(tessellation.facet_grains[secondary_node_idx]) == 1
-            _grain_j = _gname(tessellation.facet_grains[secondary_node_idx].pop(), shift=True)
+        # ---------------------------------------------------------------
+        # Enforce periodicity
+        # ---------------------------------------------------------------
 
-            self.G.add_edge(
-                _grain_i, _grain_j,
-                # Periodic unwrapping via given shift from tessellation
-                distance=(
-                    np.array(self.G.nodes[_grain_j]["position"]) -
-                    np.array(self.G.nodes[_grain_i]["position"]) -
-                    np.array(data["shift"])
-                    ),
-                area=tessellation._get_facet_surface(data["primary"])
-            )
-            self.G.add_edge(
-                _grain_j, _grain_i,
-                # Periodic unwrapping via given shift from tessellation
-                distance=(
-                    np.array(self.G.nodes[_grain_i]["position"]) -
-                    np.array(self.G.nodes[_grain_j]["position"]) +
-                    np.array(data["shift"])
-                    ),
-                area=tessellation._get_facet_surface(data["primary"])
-            )
+        if self.periodicity == "all":
+            # Wrap around periodic boundary
+            for secondary_node_idx, data in tessellation.periodicity["facets"].items():
+                assert len( tessellation.facet_grains[data["primary"]]) == 1
+                _grain_i = _gname(tessellation.facet_grains[data["primary"]].pop(), shift=True)
+                assert len(tessellation.facet_grains[secondary_node_idx]) == 1
+                _grain_j = _gname(tessellation.facet_grains[secondary_node_idx].pop(), shift=True)
+
+                self.G.add_edge(
+                    _grain_i, _grain_j,
+                    # Periodic unwrapping via given shift from tessellation
+                    distance=(
+                        np.array(self.G.nodes[_grain_j]["position"]) -
+                        np.array(self.G.nodes[_grain_i]["position"]) -
+                        np.array(data["shift"])
+                        ),
+                    area=tessellation._get_facet_surface(data["primary"])
+                )
+                self.G.add_edge(
+                    _grain_j, _grain_i,
+                    # Periodic unwrapping via given shift from tessellation
+                    distance=(
+                        np.array(self.G.nodes[_grain_i]["position"]) -
+                        np.array(self.G.nodes[_grain_j]["position"]) +
+                        np.array(data["shift"])
+                        ),
+                    area=tessellation._get_facet_surface(data["primary"])
+                )
 
         self.node_schemas = {
-            "0":  {"type": 1, "position": 3, "boundary": 1},
+            "0":  {"type": 1, "position": 3},
         }
 
     def _add_node_features(
@@ -720,6 +728,7 @@ class PolycrystalGrainGraph(PolycrystalGraph):
         self,
     ) -> None:
         ...
+
 
 class PolycrystalFacetEnhancedGraph(PolycrystalGraph):
 
@@ -763,40 +772,69 @@ class PolycrystalFacetEnhancedGraph(PolycrystalGraph):
                     _facet_i, _grain_j,
                     distance=dist,
                     length=np.linalg.norm(dist),
-                    area=tessellation._get_facet_surface(facet_id) * 0.01
+                    area=tessellation._get_facet_surface(facet_id)
                     )
                 self.G.add_edge(
                     _grain_j, _facet_i,
                     distance=-dist,
                     length=np.linalg.norm(dist),
-                    area=tessellation._get_facet_surface(facet_id) * 0.01
+                    area=tessellation._get_facet_surface(facet_id)
                     )
 
         # Connect facets that share an edge
-        for edge_id, facets in tessellation.edge_facets.items():
-            _facet_i = _fname(facets.pop(), shift=True)
-            _facet_j = _fname(facets.pop(), shift=True)
-            # Identify the vertices forming the edge
-            (_vertex_k, _vertex_l) = tessellation.edges[edge_id]
-            _edge_pos = (np.array(tessellation.vertices[_vertex_k]) + np.array(tessellation.vertices[_vertex_l])) / 2
-            self.G.add_edge(
-                _facet_i, _facet_j,
-                # Construct lenght via edge separating the facets
-                distance=np.array(self.G.nodes[_facet_j]["position"]) -
-                    np.array(self.G.nodes[_facet_i]["position"]),
-                length=np.linalg.norm(np.array(self.G.nodes[_facet_j]["position"]) - _edge_pos) +
-                    np.linalg.norm(np.array(self.G.nodes[_facet_i]["position"]) - _edge_pos),
-                area=tessellation._get_edge_length(edge_id)
-            )
-            self.G.add_edge(
-                _facet_j, _facet_i,
-                # Construct lenght via edge separating the facets
-                distance=np.array(self.G.nodes[_facet_i]["position"]) -
-                    np.array(self.G.nodes[_facet_j]["position"]),
-                length=np.linalg.norm(np.array(self.G.nodes[_facet_j]["position"]) - _edge_pos) +
-                    np.linalg.norm(np.array(self.G.nodes[_facet_i]["position"]) - _edge_pos),
-                area=tessellation._get_edge_length(edge_id)
-            )
+        # for edge_id, facets in tessellation.edge_facets.items():
+        #     _facet_i = _fname(facets.pop(), shift=True)
+        #     _facet_j = _fname(facets.pop(), shift=True)
+        #     # Identify the vertices forming the edge
+        #     (_vertex_k, _vertex_l) = tessellation.edges[edge_id]
+        #     _edge_pos = (np.array(tessellation.vertices[_vertex_k]) + np.array(tessellation.vertices[_vertex_l])) / 2
+        #     self.G.add_edge(
+        #         _facet_i, _facet_j,
+        #         # Construct lenght via edge separating the facets
+        #         distance=np.array(self.G.nodes[_facet_j]["position"]) -
+        #             np.array(self.G.nodes[_facet_i]["position"]),
+        #         length=np.linalg.norm(np.array(self.G.nodes[_facet_j]["position"]) - _edge_pos) +
+        #             np.linalg.norm(np.array(self.G.nodes[_facet_i]["position"]) - _edge_pos),
+        #         area=tessellation._get_edge_length(edge_id) * 0.005
+        #     )
+        #     self.G.add_edge(
+        #         _facet_j, _facet_i,
+        #         # Construct length via edge separating the facets
+        #         distance=np.array(self.G.nodes[_facet_i]["position"]) -
+        #             np.array(self.G.nodes[_facet_j]["position"]),
+        #         length=np.linalg.norm(np.array(self.G.nodes[_facet_j]["position"]) - _edge_pos) +
+        #             np.linalg.norm(np.array(self.G.nodes[_facet_i]["position"]) - _edge_pos),
+        #         area=tessellation._get_edge_length(edge_id) * 0.005
+        #     )
+
+        # Connect facets that share two vertices (ALTERNATIVE)
+        for facet_i, data_i in tessellation.facets.items():
+            vertices_i = data_i["vertices"]
+            for facet_j, data_j in tessellation.facets.items():
+                if facet_i != facet_j:
+                    vertices_j = data_j["vertices"]
+                    shared_vertices = np.intersect1d(vertices_i, vertices_j)
+                    if len(shared_vertices) == 2:
+                        v_1_pos = np.array(tessellation.vertices[shared_vertices[0]])
+                        v_2_pos = np.array(tessellation.vertices[shared_vertices[1]])
+                        _facet_i = _fname(facet_i, shift=True)
+                        _facet_j = _fname(facet_j, shift=True)
+                        self.G.add_edge(
+                            _facet_i, _facet_j,
+                            distance=np.array(self.G.nodes[_facet_j]["position"]) -
+                                np.array(self.G.nodes[_facet_i]["position"]),
+                            length=np.linalg.norm(np.array(self.G.nodes[_facet_j]["position"]) - (v_1_pos+v_2_pos)/2) +
+                                np.linalg.norm(np.array(self.G.nodes[_facet_i]["position"]) - (v_1_pos+v_2_pos)/2),
+                            area=np.linalg.norm(v_1_pos - v_2_pos) * 0.005
+                        )
+                        self.G.add_edge(
+                            _facet_j, _facet_i,
+                            distance=np.array(self.G.nodes[_facet_i]["position"]) -
+                                np.array(self.G.nodes[_facet_j]["position"]),
+                            length=np.linalg.norm(np.array(self.G.nodes[_facet_j]["position"]) - (v_1_pos+v_2_pos)/2) +
+                                np.linalg.norm(np.array(self.G.nodes[_facet_i]["position"]) - (v_1_pos+v_2_pos)/2),
+                            area=np.linalg.norm(v_1_pos - v_2_pos) * 0.005
+                        )
 
         # Account for periodic boundary by merging corresponding facet nodes to primary instance
         mapping = {}
@@ -807,20 +845,9 @@ class PolycrystalFacetEnhancedGraph(PolycrystalGraph):
             mapping[_fname(secondary_node_idx, shift=True)] = _fname(data["primary"], shift=True)
         nx.relabel_nodes(self.G, mapping, copy=False)
 
-        # ---------------------------------------------------------------
-        # Mark boundary nodes for periodic tessellation
-        # ---------------------------------------------------------------
-
-        # Tag periodicity relations of facets
-        # nx.set_node_attributes(self.G, [np.nan, np.nan, np.nan], "boundary_shift")
-        # for secondary_node_idx, data in tessellation.periodicity["facets"].items():
-        #     self.G.nodes[_fname(secondary_node_idx)]["boundary"] = 2
-        #     self.G.nodes[_fname(data["primary"])]["boundary"] = 1
-        #     self.G.nodes[_fname(data["primary"])]["boundary_shift"] = data["shift"]
-
         self.node_schemas = {
-            "0":  {"type": 1, "position": 3, "boundary": 1},
-            "1":  {"type": 1, "position": 3, "boundary": 1, "boundary_shift": 3}
+            "0":  {"type": 1, "position": 3},
+            "1":  {"type": 1, "position": 3}
         }
 
     def assign_eroded_material_indices(
@@ -857,6 +884,7 @@ class PolycrystalFacetEnhancedGraph(PolycrystalGraph):
         self,
     ) -> None:
         ...
+
 
 class PolycrystalVertexEnhancedGraph(PolycrystalGraph):
 
@@ -918,6 +946,10 @@ class PolycrystalVertexEnhancedGraph(PolycrystalGraph):
                     )
                 )
 
+        # ---------------------------------------------------------------
+        # Enforce periodicity
+        # ---------------------------------------------------------------
+
         # Connect vertices that form an edge
         for edge_id, (v1, v2) in tessellation.edges.items():
             _vertex_i = _vname(v1, shift=True)
@@ -957,42 +989,27 @@ class PolycrystalVertexEnhancedGraph(PolycrystalGraph):
                     )
                 ) 
 
-        # ---------------------------------------------------------------
-        # Mark boundary nodes for periodic tessellation
-        # ---------------------------------------------------------------
-
-        # Tag periodicity relations of vertices
-        # nx.set_node_attributes(self.G, [np.nan, np.nan, np.nan], "boundary_shift")
-        # for secondary_node_idx, data in tessellation.periodicity["vertices"].items():
-        #     self.G.nodes[_vname(secondary_node_idx)]["boundary"] = 2
-        #     self.G.nodes[_vname(data["primary"])]["boundary"] = 1
-        #     self.G.nodes[_vname(data["primary"])]["boundary_shift"] = data["shift"]
-
-        # # Tag periodicity relations of facets
-        # nx.set_node_attributes(self.G, [np.nan, np.nan, np.nan], "boundary_shift")
-        # for secondary_node_idx, data in tessellation.periodicity["facets"].items():
-        #     self.G.nodes[_fname(secondary_node_idx)]["boundary"] = 2
-        #     self.G.nodes[_fname(data["primary"])]["boundary"] = 1
-        #     self.G.nodes[_fname(data["primary"])]["boundary_shift"] = data["shift"]
-
-        # Account for periodic boundary by merging corresponding facet nodes to primary instance
-        mapping = {}
-        for secondary_node_idx, data in tessellation.periodicity["facets"].items():
-            # Make sure that nodes to be merged do not have common edges (might alter attributes)
-            assert len([x for x in list(self.G.neighbors(_fname(data["primary"], shift=True))) 
-                        if x in list(self.G.neighbors(_fname(secondary_node_idx, shift=True)))]) == 0
-            mapping[_fname(secondary_node_idx, shift=True)] = _fname(data["primary"], shift=True)
-        for secondary_node_idx, data in tessellation.periodicity["vertices"].items():
-            # Make sure that nodes to be merged do not have common edges (might alter attributes)
-            assert len([x for x in list(self.G.neighbors(_vname(data["primary"], shift=True))) 
-                        if x in list(self.G.neighbors(_vname(secondary_node_idx, shift=True)))]) == 0
-            mapping[_vname(secondary_node_idx, shift=True)] = _vname(data["primary"], shift=True)
-        nx.relabel_nodes(self.G, mapping, copy=False)
+        if self.periodicity == "all":
+            # Account for periodic boundary by merging corresponding facet nodes to primary instance
+            mapping = {}
+            for secondary_node_idx, data in tessellation.periodicity["facets"].items():
+                # Make sure that nodes to be merged do not have common edges (might alter attributes)
+                assert len([x for x in list(self.G.neighbors(_fname(data["primary"], shift=True))) 
+                            if x in list(self.G.neighbors(_fname(secondary_node_idx, shift=True)))]) == 0
+                mapping[_fname(secondary_node_idx, shift=True)] = _fname(data["primary"], shift=True)
+            for secondary_node_idx, data in tessellation.periodicity["vertices"].items():
+                print([x for x in list(self.G.neighbors(_vname(data["primary"], shift=True))) 
+                            if x in list(self.G.neighbors(_vname(secondary_node_idx, shift=True)))])
+                # Make sure that nodes to be merged do not have common edges (might alter attributes)
+                assert len([x for x in list(self.G.neighbors(_vname(data["primary"], shift=True))) 
+                            if x in list(self.G.neighbors(_vname(secondary_node_idx, shift=True)))]) == 0
+                mapping[_vname(secondary_node_idx, shift=True)] = _vname(data["primary"], shift=True)
+            nx.relabel_nodes(self.G, mapping, copy=False)
 
         self.node_schemas = {
-            "0":  {"type": 1, "position": 3, "boundary": 1},
-            "1":  {"type": 1, "position": 3, "boundary": 1, "boundary_shift": 3},
-            "2":  {"type": 1, "position": 3, "boundary": 1, "boundary_shift": 3}
+            "0":  {"type": 1, "position": 3},
+            "1":  {"type": 1, "position": 3},
+            "2":  {"type": 1, "position": 3}
         }
 
     def _add_node_features(
