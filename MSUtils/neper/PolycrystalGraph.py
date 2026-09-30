@@ -27,9 +27,8 @@ def _fname(facet_id: int, shift=False):
 class PolycrystalGraph:
     def __init__(
         self,
-        periodicity: str = "all",
+        periodicity: bool = True,
     ) -> Self:
-        assert periodicity in ["none", "all"], 'Invalid periodicity property of the tessellation. Needs to be "none" or "all".'
         self.G = nx.MultiDiGraph()
         self.periodicity = periodicity
 
@@ -108,8 +107,8 @@ class PolycrystalGraph:
         raise NotImplementedError
     
     def graph_stats(
-        self
-    ):
+        self,
+    ) -> None:
         degrees = [d for _, d in self.G.degree()]
         print("=========================")
         print("Graph statisics:")
@@ -123,6 +122,13 @@ class PolycrystalGraph:
         print(f"Avg degree:  {sum(degrees) / len(degrees):.2f}")
         print(f"Max degree:  {max(degrees):,}")
         print(f"Min degree:  {min(degrees):,}\n")
+
+    def attribute_names(
+        self,
+    ) -> None:
+        node_attrs = set().union(*(d.keys() for _, d in self.G.nodes(data=True)))
+        edge_attrs = set().union(*(d.keys() for _, _, d in self.G.edges(data=True)))
+        return node_attrs, edge_attrs
 
     def visualize_3d(
         self,
@@ -344,9 +350,9 @@ class PolycrystalGraph:
 
     def write_graph_xdmf(
         self,
-        filename,
-        node_values,
-        edge_values,
+        filename: dict,
+        node_values: dict,
+        edge_values: dict,
     ):
         """
         Write a graph to an XDMF file.
@@ -356,22 +362,27 @@ class PolycrystalGraph:
         filename : str
             Output filename, e.g. "graph.xdmf".
 
-        node_values : array-like, shape (N,)
-            Scalar value associated with each node.
+        node_values : dict
+            Each component consists of label (str) and data (scalar value associated with each node).
+            If the label is an attribute on the graph the graph's attribute data is used. Then None can be provided instead of data.
 
-        edge_values : array-like, shape (M,)
-            Scalar value associated with each edge.
+        edge_values : dict
+            Each component consists of label (str) and data (scalar value associated with each node).
+            If the label is an attribute on the graph the graph's attribute data is used. Then None can be provided instead of data.
         """
 
         positions = np.array([data["position"] for _, data in self.G.nodes(data=True)])
         edges = list(self.G.edges(data=True))
 
+        # Map node names -> integers
+        node_to_int = {node: i for i, node in enumerate(self.G.nodes())}
         connectivity = np.array(
-            [(u, v) for u, v, data in edges],
+            [(node_to_int[u], node_to_int[v]) for u, v, data in edges],
             dtype=int
         )
-        node_values = np.asarray(node_values, dtype=float)
-        edge_values = np.asarray(edge_values, dtype=float)
+        mask = connectivity[:,0] < connectivity[:,1]
+        connectivity = connectivity[mask,:]
+
 
         # ------------------------------------------------------------
         # Validate input
@@ -391,31 +402,10 @@ class PolycrystalGraph:
 
         n_edges = connectivity.shape[0]
 
-        if len(node_values) != n_nodes:
-            raise ValueError(
-                f"node_values has length {len(node_values)}, "
-                f"but there are {n_nodes} nodes"
-            )
-
-        if len(edge_values) != n_edges:
-            raise ValueError(
-                f"edge_values has length {len(edge_values)}, "
-                f"but there are {n_edges} edges"
-            )
-
         if np.any(connectivity < 0) or np.any(connectivity >= n_nodes):
             raise ValueError(
                 "connectivity contains invalid node indices"
             )
-
-        # # ------------------------------------------------------------
-        # # Convert 2D coordinates to 3D
-        # # ------------------------------------------------------------
-
-        # if positions.shape[1] == 2:
-        #     positions = np.column_stack(
-        #         [positions, np.zeros(n_nodes)]
-        #     )
 
         # ------------------------------------------------------------
         # Convert arrays to XDMF text
@@ -429,16 +419,6 @@ class PolycrystalGraph:
         connectivity_text = "\n".join(
             f"{i} {j}"
             for i, j in connectivity
-        )
-
-        node_values_text = "\n".join(
-            f"{v:.16g}"
-            for v in node_values
-        )
-
-        edge_values_text = "\n".join(
-            f"{v:.16g}"
-            for v in edge_values
         )
 
         # ------------------------------------------------------------
@@ -487,14 +467,38 @@ class PolycrystalGraph:
         </DataItem>
 
       </Geometry>
+"""
+        
+        node_attrs, edge_attrs = self.attribute_names()
+        for i, (node_label, node_data) in enumerate(node_values.items()):
+            assert type(node_label) == str
+            if node_label in node_attrs:
+                node_data = [
+                    self.G.nodes[node].get(node_label, np.nan)
+                    for node in self.G.nodes
+                ]
+            else:
+                assert type(node_data) in [np.ndarray, list]
+                assert len(node_data) == n_nodes, f'Invalid input for node values to be displayed: \
+                    Provided data has length {len(node_data)} but there are {n_nodes} nodes in the graph.'
+                field_values = node_values
 
+            node_values_text = "\n".join(
+                f"{v:.16g}"
+                for v in node_data
+            )
 
+            if i == 0:
+                xdmf += """
       <!-- =====================================================
            Scalar value associated with each node
            ===================================================== -->
+"""
+                    
+            xdmf += f"""
 
       <Attribute
-          Name="node_value"
+          Name="{node_label}"
           AttributeType="Scalar"
           Center="Node">
 
@@ -507,14 +511,37 @@ class PolycrystalGraph:
         </DataItem>
 
       </Attribute>
+"""
 
+        for i, (edge_label, edge_data) in enumerate(edge_values.items()):
+            assert type(edge_label) == str
+            if edge_label in edge_attrs:
+                field_values = [
+                    self.G.edges[edge].get(edge_data, np.nan)
+                    for edge in self.G.edges
+                ]
+            else:
+                assert type(edge_data) in [np.ndarray, list]
+                assert len(edge_data) == n_edges, f'Invalid input for edge values to be displayed: \
+                    Provided data has length {len(edge_data)} but there are {n_edges} edges in the graph.'
+                field_values = edge_values
+            
+            edge_values_text = "\n".join(
+                f"{v:.16g}"
+                for v in edge_data
+            )
 
+            if i == 0:
+                xdmf += """
       <!-- =====================================================
-           Scalar value associated with each edge
+           Scalar value associated with each node
            ===================================================== -->
+"""
+                 
+            xdmf += f"""
 
       <Attribute
-          Name="edge_value"
+          Name="{edge_label}"
           AttributeType="Scalar"
           Center="Cell">
 
@@ -527,7 +554,9 @@ class PolycrystalGraph:
         </DataItem>
 
       </Attribute>
+"""
 
+        xdmf += """
     </Grid>
 
   </Domain>
@@ -686,7 +715,7 @@ class PolycrystalGrainGraph(PolycrystalGraph):
         # Enforce periodicity
         # ---------------------------------------------------------------
 
-        if self.periodicity == "all":
+        if self.periodicity:
             # Wrap around periodic boundary
             for secondary_node_idx, data in tessellation.periodicity["facets"].items():
                 assert len( tessellation.facet_grains[data["primary"]]) == 1
@@ -989,7 +1018,7 @@ class PolycrystalVertexEnhancedGraph(PolycrystalGraph):
                     )
                 ) 
 
-        if self.periodicity == "all":
+        if self.periodicity:
             # Account for periodic boundary by merging corresponding facet nodes to primary instance
             mapping = {}
             for secondary_node_idx, data in tessellation.periodicity["facets"].items():
@@ -998,8 +1027,6 @@ class PolycrystalVertexEnhancedGraph(PolycrystalGraph):
                             if x in list(self.G.neighbors(_fname(secondary_node_idx, shift=True)))]) == 0
                 mapping[_fname(secondary_node_idx, shift=True)] = _fname(data["primary"], shift=True)
             for secondary_node_idx, data in tessellation.periodicity["vertices"].items():
-                print([x for x in list(self.G.neighbors(_vname(data["primary"], shift=True))) 
-                            if x in list(self.G.neighbors(_vname(secondary_node_idx, shift=True)))])
                 # Make sure that nodes to be merged do not have common edges (might alter attributes)
                 assert len([x for x in list(self.G.neighbors(_vname(data["primary"], shift=True))) 
                             if x in list(self.G.neighbors(_vname(secondary_node_idx, shift=True)))]) == 0
