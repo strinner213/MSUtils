@@ -28,7 +28,7 @@ class PolycrystalGraph:
     def __init__(
         self,
     ) -> Self:
-        self.G = nx.MultiGraph()
+        self.G = nx.MultiDiGraph()
 
     @classmethod
     def from_tess(
@@ -62,7 +62,7 @@ class PolycrystalGraph:
             if 'node_features_1' in grp.keys():
                 x_facet     = grp['node_features_1'][:]
             else:
-                x_face = []
+                x_facet = []
             if 'node_features_2' in grp.keys():
                 x_vertex    = grp['node_features_2'][:]
             else:
@@ -87,7 +87,10 @@ class PolycrystalGraph:
                 position=x[i]
             )
 
-        graph.G.add_edges_from(edge_index[:,::2].T)
+        mask = edge_index[0] < edge_index[1]
+        edge_index_unique = edge_index[:, mask]
+        #_edge_attr = edge_attr[mask]
+        graph.G.add_edges_from(edge_index_unique.T)
 
         return graph
 
@@ -100,6 +103,7 @@ class PolycrystalGraph:
 
     def _add_edge_features(self):
         raise NotImplementedError
+    
     def graph_stats(
         self
     ):
@@ -111,8 +115,8 @@ class PolycrystalGraph:
         print(f"Nodes:       {self.G.number_of_nodes():,}")
         print(f"Edges:       {self.G.number_of_edges():,}")
         print(f"Density:     {nx.density(self.G):.4f}")
-        print(f"Connected:   {nx.is_connected(self.G)}")
-        print(f"Components:  {nx.number_connected_components(self.G)}")
+        #print(f"Connected:   {nx.is_connected(self.G)}")
+        #print(f"Components:  {nx.number_connected_components(self.G)}")
         print(f"Avg degree:  {sum(degrees) / len(degrees):.2f}")
         print(f"Max degree:  {max(degrees):,}")
         print(f"Min degree:  {min(degrees):,}\n")
@@ -335,6 +339,201 @@ class PolycrystalGraph:
             transparency=0,
         )
 
+    def write_graph_xdmf(
+        self,
+        filename,
+        node_values,
+        edge_values,
+    ):
+        """
+        Write a graph to an XDMF file.
+
+        Parameters
+        ----------
+        filename : str
+            Output filename, e.g. "graph.xdmf".
+
+        node_values : array-like, shape (N,)
+            Scalar value associated with each node.
+
+        edge_values : array-like, shape (M,)
+            Scalar value associated with each edge.
+        """
+
+        positions = np.array([data["position"] for _, data in self.G.nodes(data=True)])
+        edges = list(self.G.edges(data=True))
+
+        connectivity = np.array(
+            [(u, v) for u, v, data in edges],
+            dtype=int
+        )
+        node_values = np.asarray(node_values, dtype=float)
+        edge_values = np.asarray(edge_values, dtype=float)
+
+        # ------------------------------------------------------------
+        # Validate input
+        # ------------------------------------------------------------
+
+        if positions.ndim != 2 or positions.shape[1] not in (2, 3):
+            raise ValueError(
+                "positions must have shape (N, 2) or (N, 3)"
+            )
+
+        n_nodes = positions.shape[0]
+
+        if connectivity.ndim != 2 or connectivity.shape[1] != 2:
+            raise ValueError(
+                "connectivity must have shape (M, 2)"
+            )
+
+        n_edges = connectivity.shape[0]
+
+        if len(node_values) != n_nodes:
+            raise ValueError(
+                f"node_values has length {len(node_values)}, "
+                f"but there are {n_nodes} nodes"
+            )
+
+        if len(edge_values) != n_edges:
+            raise ValueError(
+                f"edge_values has length {len(edge_values)}, "
+                f"but there are {n_edges} edges"
+            )
+
+        if np.any(connectivity < 0) or np.any(connectivity >= n_nodes):
+            raise ValueError(
+                "connectivity contains invalid node indices"
+            )
+
+        # # ------------------------------------------------------------
+        # # Convert 2D coordinates to 3D
+        # # ------------------------------------------------------------
+
+        # if positions.shape[1] == 2:
+        #     positions = np.column_stack(
+        #         [positions, np.zeros(n_nodes)]
+        #     )
+
+        # ------------------------------------------------------------
+        # Convert arrays to XDMF text
+        # ------------------------------------------------------------
+
+        coordinates_text = "\n".join(
+            f"{x:.16g} {y:.16g} {z:.16g}"
+            for x, y, z in positions
+        )
+
+        connectivity_text = "\n".join(
+            f"{i} {j}"
+            for i, j in connectivity
+        )
+
+        node_values_text = "\n".join(
+            f"{v:.16g}"
+            for v in node_values
+        )
+
+        edge_values_text = "\n".join(
+            f"{v:.16g}"
+            for v in edge_values
+        )
+
+        # ------------------------------------------------------------
+        # XDMF document
+        # ------------------------------------------------------------
+
+        xdmf = f"""<?xml version="1.0" ?>
+<!DOCTYPE Xdmf SYSTEM "Xdmf.dtd">
+
+<Xdmf Version="3.0">
+  <Domain>
+
+    <Grid Name="Graph" GridType="Uniform">
+
+      <!-- =====================================================
+           Graph connectivity
+           ===================================================== -->
+
+      <Topology
+          TopologyType="PolyLine"
+          NumberOfElements="{n_edges}"
+          NodesPerElement="2">
+
+        <DataItem
+            Format="XML"
+            NumberType="Int"
+            Dimensions="{n_edges} 2">
+{connectivity_text}
+        </DataItem>
+
+      </Topology>
+
+
+      <!-- =====================================================
+           Node coordinates
+           ===================================================== -->
+
+      <Geometry GeometryType="XYZ">
+
+        <DataItem
+            Format="XML"
+            NumberType="Float"
+            Precision="8"
+            Dimensions="{n_nodes} 3">
+{coordinates_text}
+        </DataItem>
+
+      </Geometry>
+
+
+      <!-- =====================================================
+           Scalar value associated with each node
+           ===================================================== -->
+
+      <Attribute
+          Name="node_value"
+          AttributeType="Scalar"
+          Center="Node">
+
+        <DataItem
+            Format="XML"
+            NumberType="Float"
+            Precision="8"
+            Dimensions="{n_nodes}">
+{node_values_text}
+        </DataItem>
+
+      </Attribute>
+
+
+      <!-- =====================================================
+           Scalar value associated with each edge
+           ===================================================== -->
+
+      <Attribute
+          Name="edge_value"
+          AttributeType="Scalar"
+          Center="Cell">
+
+        <DataItem
+            Format="XML"
+            NumberType="Float"
+            Precision="8"
+            Dimensions="{n_edges}">
+{edge_values_text}
+        </DataItem>
+
+      </Attribute>
+
+    </Grid>
+
+  </Domain>
+</Xdmf>
+"""
+
+        with open(filename, "w") as f:
+            f.write(xdmf)
+
     def write_h5(
         self,
         filename: Path,
@@ -367,14 +566,13 @@ class PolycrystalGraph:
 
         for u, v, data in self.G.edges(data=True):
             i, j = node_to_idx[u], node_to_idx[v]
-            #features = [data.get(f, 0) for f in edge_features]
             features = np.concatenate([
                 np.atleast_1d(data.get(f, 0)).ravel()
                 for f in edge_features
             ])
 
-            edges.extend([(i, j), (j, i)])
-            E.extend([features, features])
+            edges.extend([(i, j)])
+            E.extend([features])
 
         edge_index = np.asarray(edges, dtype=np.int64).T
         E = np.asarray(E, dtype=np.float32)
@@ -404,6 +602,7 @@ class PolycrystalGraph:
                 compression_opts=compression_opts
             )
             dset.attrs['n_edges'] = self.G.number_of_edges()
+            dset.attrs['order'] = str(edge_features)
 
             dset = grp.create_dataset(
                 'node_ids',
@@ -462,12 +661,22 @@ class PolycrystalGrainGraph(PolycrystalGraph):
             if len(grains) == 2:
                 _grain_i = _gname(grains.pop(), shift=True)
                 _grain_j = _gname(grains.pop(), shift=True)
+
                 self.G.add_edge(
                     _grain_i, _grain_j,
                     # Compute standard distance (no un-wrapping of periodicity needed)
                     distance=(
                         np.array(self.G.nodes[_grain_j]["position"]) - 
-                        np.array(self.G.nodes[_grain_i]["position"]))
+                        np.array(self.G.nodes[_grain_i]["position"])),
+                    area=tessellation._get_facet_surface(facet_id)
+                    )
+                self.G.add_edge(
+                    _grain_j, _grain_i,
+                    # Compute standard distance (no un-wrapping of periodicity needed)
+                    distance=(
+                        np.array(self.G.nodes[_grain_i]["position"]) - 
+                        np.array(self.G.nodes[_grain_j]["position"])),
+                    area=tessellation._get_facet_surface(facet_id)
                     )
 
         # Wrap around periodic boundary
@@ -484,7 +693,18 @@ class PolycrystalGrainGraph(PolycrystalGraph):
                     np.array(self.G.nodes[_grain_j]["position"]) -
                     np.array(self.G.nodes[_grain_i]["position"]) -
                     np.array(data["shift"])
-                    )
+                    ),
+                area=tessellation._get_facet_surface(data["primary"])
+            )
+            self.G.add_edge(
+                _grain_j, _grain_i,
+                # Periodic unwrapping via given shift from tessellation
+                distance=(
+                    np.array(self.G.nodes[_grain_i]["position"]) -
+                    np.array(self.G.nodes[_grain_j]["position"]) +
+                    np.array(data["shift"])
+                    ),
+                area=tessellation._get_facet_surface(data["primary"])
             )
 
         self.node_schemas = {
@@ -528,7 +748,6 @@ class PolycrystalFacetEnhancedGraph(PolycrystalGraph):
                  "boundary": 0})
             for facet_id, facet in tessellation.facets.items()
         )
-        print(self.G.number_of_nodes())
 
         # ---------------------------------------------------------------
         # Add edges
@@ -539,11 +758,18 @@ class PolycrystalFacetEnhancedGraph(PolycrystalGraph):
             _facet_i = _fname(facet_id, shift=True)
             for _ in range(len(grains)):
                 _grain_j = _gname(grains.pop(), shift=True)
+                dist = np.array(self.G.nodes[_grain_j]["position"]) - np.array(self.G.nodes[_facet_i]["position"])
                 self.G.add_edge(
                     _facet_i, _grain_j,
-                    distance=(
-                        np.array(self.G.nodes[_grain_j]["position"]) -
-                        np.array(self.G.nodes[_facet_i]["position"]))
+                    distance=dist,
+                    length=np.linalg.norm(dist),
+                    area=tessellation._get_facet_surface(facet_id) * 0.01
+                    )
+                self.G.add_edge(
+                    _grain_j, _facet_i,
+                    distance=-dist,
+                    length=np.linalg.norm(dist),
+                    area=tessellation._get_facet_surface(facet_id) * 0.01
                     )
 
         # Connect facets that share an edge
@@ -556,9 +782,20 @@ class PolycrystalFacetEnhancedGraph(PolycrystalGraph):
             self.G.add_edge(
                 _facet_i, _facet_j,
                 # Construct lenght via edge separating the facets
-                distance=
-                    np.linalg.norm(np.array(self.G.nodes[_facet_j]["position"]) - _edge_pos) +
-                    np.linalg.norm(np.array(self.G.nodes[_facet_i]["position"]) - _edge_pos)
+                distance=np.array(self.G.nodes[_facet_j]["position"]) -
+                    np.array(self.G.nodes[_facet_i]["position"]),
+                length=np.linalg.norm(np.array(self.G.nodes[_facet_j]["position"]) - _edge_pos) +
+                    np.linalg.norm(np.array(self.G.nodes[_facet_i]["position"]) - _edge_pos),
+                area=tessellation._get_edge_length(edge_id)
+            )
+            self.G.add_edge(
+                _facet_j, _facet_i,
+                # Construct lenght via edge separating the facets
+                distance=np.array(self.G.nodes[_facet_i]["position"]) -
+                    np.array(self.G.nodes[_facet_j]["position"]),
+                length=np.linalg.norm(np.array(self.G.nodes[_facet_j]["position"]) - _edge_pos) +
+                    np.linalg.norm(np.array(self.G.nodes[_facet_i]["position"]) - _edge_pos),
+                area=tessellation._get_edge_length(edge_id)
             )
 
         # Account for periodic boundary by merging corresponding facet nodes to primary instance
@@ -592,9 +829,7 @@ class PolycrystalFacetEnhancedGraph(PolycrystalGraph):
     ) -> None:
         for tag, (_, grain_i, grain_j) in erosion.ridge_metadata.items():
             # First, identify all facet nodes that have the respective grain pair as neighbors
-            print(grain_i, grain_j)
             common_neighbors = nx.common_neighbors(self.G, _gname(grain_i), _gname(grain_j))
-            print(tag, common_neighbors)
             if len(common_neighbors) == 1:
                 self.G.nodes[common_neighbors.pop()]["mat_idx"] = tag
             else:
@@ -675,6 +910,13 @@ class PolycrystalVertexEnhancedGraph(PolycrystalGraph):
                         np.array(self.G.nodes[_facet_i]["position"])
                     )
                 )
+                self.G.add_edge(
+                    _grain_j, _facet_i,
+                    distance=(
+                        np.array(self.G.nodes[_facet_i]["position"]) -
+                        np.array(self.G.nodes[_grain_j]["position"])
+                    )
+                )
 
         # Connect vertices that form an edge
         for edge_id, (v1, v2) in tessellation.edges.items():
@@ -685,6 +927,13 @@ class PolycrystalVertexEnhancedGraph(PolycrystalGraph):
                 distance=(
                     np.array(self.G.nodes[_vertex_j]["position"]) -
                     np.array(self.G.nodes[_vertex_i]["position"])
+                )
+            )
+            self.G.add_edge(
+                _vertex_j, _vertex_i,
+                distance=(
+                    np.array(self.G.nodes[_vertex_i]["position"]) -
+                    np.array(self.G.nodes[_vertex_j]["position"])
                 )
             )
 
@@ -698,6 +947,13 @@ class PolycrystalVertexEnhancedGraph(PolycrystalGraph):
                     distance=(
                         np.array(self.G.nodes[_vertex_j]["position"]) -
                         np.array(self.G.nodes[_facet_i]["position"])
+                    )
+                )
+                self.G.add_edge(
+                    _vertex_j, _facet_i,
+                    distance=(
+                        np.array(self.G.nodes[_facet_i]["position"]) -
+                        np.array(self.G.nodes[_vertex_j]["position"])
                     )
                 ) 
 
@@ -748,16 +1004,3 @@ class PolycrystalVertexEnhancedGraph(PolycrystalGraph):
         self,
     ) -> None:
         ...
-
-        # for feature in self.edge_feature_labels:
-        #     match feature:
-        #         case 'distance':
-        #             distances = {
-        #                 (u, v): (
-        #                     np.asarray(self.G.nodes[v]["position"]) - np.asarray(self.G.nodes[u]["position"])
-        #                 )
-        #                 for u, v in self.G.edges
-        #             }
-
-        #             nx.set_edge_attributes(self.G, distances, "distance")
-
