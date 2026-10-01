@@ -348,7 +348,7 @@ class PolycrystalGraph:
             transparency=0,
         )
 
-    def write_graph_xdmf(
+    def write_xdmf(
         self,
         filename: dict,
         node_values: dict,
@@ -570,6 +570,8 @@ class PolycrystalGraph:
         self,
         filename: Path,
         grp: str,
+        node_attr: list[list[str]],
+        edge_attr: list[str],
         export_stats: bool = False,
     ) -> None:
         nodes = list(self.G.nodes())
@@ -577,22 +579,26 @@ class PolycrystalGraph:
 
         # Node features
         nodes_by_type = defaultdict(list)
+        node_types = np.zeros(self.G.number_of_nodes(), dtype=int)
         for n, attrs in self.G.nodes(data=True):
             nodes_by_type[attrs.get("type")].append(n)
+            node_types[node_to_idx[n]] = attrs.get("type")
+
+        assert len(node_attr) == len(nodes_by_type.items())
 
         X = dict()
-        for t in self.node_schemas:
-            nodes_t = nodes_by_type[int(t)]
-            X[int(t)] = np.zeros((len(nodes_t), sum(self.node_schemas[t].values())))
-            for i_n, n in enumerate(nodes_t):
-                idx = 0
-                for f in self.node_schemas[t].keys():
+        for t in range(len(nodes_by_type)):
+            X[t] = []
+            nodes_t = nodes_by_type[t]
+            for n in nodes_t:
 
-                    X[int(t)][i_n, idx:idx+self.node_schemas[t][f]] = self.G.nodes[n].get(f, 0)
-                    idx += self.node_schemas[t][f]
+                features = np.concatenate([
+                    np.atleast_1d(self.G.nodes[n].get(f, 0)).ravel()
+                    for f in node_attr[t]
+                ])
+                X[t].extend([features])
 
         # Edges, both directions
-        edge_features = {key for _, _, attrs in self.G.edges(data=True) for key in attrs}
         edges = []
         E = []
 
@@ -600,7 +606,7 @@ class PolycrystalGraph:
             i, j = node_to_idx[u], node_to_idx[v]
             features = np.concatenate([
                 np.atleast_1d(data.get(f, 0)).ravel()
-                for f in edge_features
+                for f in edge_attr
             ])
 
             edges.extend([(i, j)])
@@ -615,26 +621,27 @@ class PolycrystalGraph:
             grp = h5_file.require_group(grp)
 
             grp["edge_index"] = edge_index
-            for t in self.node_schemas:
+            grp["node_types"] = node_types
+            for t in range(len(nodes_by_type)):
                 dset = grp.create_dataset(
-                    f'node_features_{t}',
-                    data=X[int(t)],
+                    f'x_{t}',
+                    data=X[t],
                     dtype='f8',
                     compression='gzip',
                     compression_opts=compression_opts
                 )
-                dset.attrs['n_nodes_type'] = len(nodes_by_type[int(t)])
-                dset.attrs['order'] = str(self.node_schemas[t])
+                dset.attrs['n_nodes_type'] = len(nodes_by_type[t])
+                dset.attrs['order'] = str(node_attr[t])
 
             dset = grp.create_dataset(
-                'edge_features',
+                'edge_attr',
                 data=E,
                 dtype='f8',
                 compression='gzip',
                 compression_opts=compression_opts
             )
             dset.attrs['n_edges'] = self.G.number_of_edges()
-            dset.attrs['order'] = str(edge_features)
+            dset.attrs['order'] = str(edge_attr)
 
             dset = grp.create_dataset(
                 'node_ids',
@@ -930,24 +937,21 @@ class PolycrystalVertexEnhancedGraph(PolycrystalGraph):
         self.G.add_nodes_from(
             (_gname(grain_id, shift=True), 
              {"position": grain_data, 
-              "type": 0,
-              "boundary": 0})
+              "type": 0})
             for grain_id, grain_data in tessellation.seeds.items()
         )
         # Add one node per facet (compute centroid for position)
         self.G.add_nodes_from(
             (_fname(facet_id, shift=True), 
              {"position": np.mean([tessellation.vertices[vertex_id] for vertex_id in facet['vertices']], axis=0),
-              "type": 1,
-              "boundary": 0})
+              "type": 1})
             for facet_id, facet in tessellation.facets.items()
         )
         # Add one node per vertex (position given in tessellation)
         self.G.add_nodes_from(
             (_vname(vertex_id, shift=True), 
              {"position": vertex_data, 
-              "type": 2,
-              "boundary": 0})
+              "type": 2})
             for vertex_id, vertex_data in tessellation.vertices.items()
         )
 
