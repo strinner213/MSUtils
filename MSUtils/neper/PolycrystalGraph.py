@@ -9,6 +9,7 @@ from matplotlib.colors import Normalize
 import networkx as nx
 from collections import defaultdict
 import copy
+from numpy.typing import ArrayLike
 
 from MSUtils.neper.NeperTessellation import NeperTessellation
 from MSUtils.neper.NeperGBErosion import NeperGBErosion
@@ -36,19 +37,11 @@ class PolycrystalGraph:
     def from_tess(
         cls,
         tessellation: NeperTessellation,
-        node_features: list[str],
-        edge_features: list[str],
     ):
         graph = cls(tessellation.periodicity)
     
         # Pass deep-copy to avoid altered tessellation
         graph._construct_topology(copy.deepcopy(tessellation))
-
-        graph.node_feature_labels = node_features
-        graph._add_node_features()
-
-        graph.edge_feature_labels = edge_features
-        graph._add_edge_features()
 
         return graph
 
@@ -60,26 +53,26 @@ class PolycrystalGraph:
     ):
         with h5py.File(filepath, 'r') as h5_file:
             grp = h5_file[grp]
-            x_grain     = grp['node_features_0'][:]
-            if 'node_features_1' in grp.keys():
-                x_facet     = grp['node_features_1'][:]
+            x_grain     = grp['x_0'][:]
+            if 'x_1' in grp.keys():
+                x_facet     = grp['x_1'][:]
             else:
                 x_facet = []
-            if 'node_features_2' in grp.keys():
-                x_vertex    = grp['node_features_2'][:]
+            if 'x_2' in grp.keys():
+                x_vertex    = grp['x_2'][:]
             else:
                 x_vertex = []
             edge_index  = grp['edge_index'][:]
-            #edge_attr   = grp['edge_features'][:]
+            #edge_attr   = grp['edge_attr'][:]
 
         graph = cls()
 
         n_nodes = len(x_grain) + len(x_facet) + len(x_vertex)
 
         if (len(x_facet) > 0) and (len(x_vertex) > 0):
-            x = np.vstack((x_grain[:,1:4], x_facet[:,1:4], x_vertex[:,1:4]))
+            x = np.vstack((x_grain[:,:3], x_facet[:,:3], x_vertex[:,:3]))
         elif len(x_facet) > 0:
-            x = np.vstack((x_grain[:,1:4], x_facet[:,1:4]))
+            x = np.vstack((x_grain[:,:3], x_facet[:,:3]))
         else:
             x = x_grain[:,1:4]
 
@@ -96,16 +89,42 @@ class PolycrystalGraph:
 
         return graph
 
-
     def _construct_topology(self, tessellation: NeperTessellation):
         raise NotImplementedError
 
-    def _add_node_features(self):
-        raise NotImplementedError
+    def count_nodes_by_type(self):
+        nodes_by_type = defaultdict(list)
+        for n, attrs in self.G.nodes(data=True):
+            nodes_by_type[attrs.get("type")].append(n)
 
-    def _add_edge_features(self):
-        raise NotImplementedError
-    
+        self.node_type_count = []
+        for i in range(len(nodes_by_type)):
+            self.node_type_count.append(len(nodes_by_type[i]))
+
+    def add_node_attribute(
+        self,
+        label: str,
+        node_type: int,
+        data: ArrayLike,
+    ) -> None:
+        filtered_nodes = sorted([
+            node for node, data in self.G.nodes(data=True)
+            if data.get("type") == node_type
+        ])
+
+        assert len(data) == len(filtered_nodes)
+
+        for node, value in zip(filtered_nodes, data):
+            self.G.nodes[node][label] = value
+
+    def scale_edge_attribute(
+        self,
+        label: str,
+        scaling_factor: float
+    ) -> None:
+        for _, _, data in self.G.edges(data=True):
+            data[label] = data[label] * scaling_factor
+
     def graph_stats(
         self,
     ) -> None:
@@ -573,6 +592,7 @@ class PolycrystalGraph:
         node_attr: list[list[str]],
         edge_attr: list[str],
         export_stats: bool = False,
+        metadata: dict = {},
     ) -> None:
         nodes = list(self.G.nodes())
         node_to_idx = {node: i for i, node in enumerate(nodes)}
@@ -649,7 +669,6 @@ class PolycrystalGraph:
             )
             dset.attrs['n_nodes'] = self.G.number_of_nodes()
 
-
             if export_stats:
                 degrees = [d for _, d in self.G.degree()]
                 grp_stats = grp.require_group("stats")
@@ -668,6 +687,10 @@ class PolycrystalGraph:
                 dset.attrs['average'] = sum(degrees) / len(degrees)
                 dset.attrs['min'] = min(degrees)
                 dset.attrs['max'] = max(degrees)
+
+            for key, value in metadata.items():
+                print(key, value)
+                grp.attrs[key] = value
 
         
 class PolycrystalGrainGraph(PolycrystalGraph):
@@ -751,19 +774,7 @@ class PolycrystalGrainGraph(PolycrystalGraph):
                     area=tessellation._get_facet_surface(data["primary"])
                 )
 
-        self.node_schemas = {
-            "0":  {"type": 1, "position": 3},
-        }
-
-    def _add_node_features(
-        self,
-    ) -> None:
-        ...
-
-    def _add_edge_features(
-        self,
-    ) -> None:
-        ...
+        self.count_nodes_by_type()
 
 
 class PolycrystalFacetEnhancedGraph(PolycrystalGraph):
@@ -881,11 +892,6 @@ class PolycrystalFacetEnhancedGraph(PolycrystalGraph):
             mapping[_fname(secondary_node_idx, shift=True)] = _fname(data["primary"], shift=True)
         nx.relabel_nodes(self.G, mapping, copy=False)
 
-        self.node_schemas = {
-            "0":  {"type": 1, "position": 3},
-            "1":  {"type": 1, "position": 3}
-        }
-
     def assign_eroded_material_indices(
         self,
         erosion: NeperGBErosion,
@@ -903,23 +909,6 @@ class PolycrystalFacetEnhancedGraph(PolycrystalGraph):
 
         for node, data in self.G.nodes(data=True):
             print(node, data.get("mat_idx"), list(self.G.neighbors(node)))
-
-            
-
-    def _add_node_features(
-        self,
-    ) -> None:
-        ...
-        # Orientation information
-        # for node, data in self.G.nodes(data=True):
-        #     if data["type"] == 1:
-        #         node["orientation"] = 
-
-
-    def _add_edge_features(
-        self,
-    ) -> None:
-        ...
 
 
 class PolycrystalVertexEnhancedGraph(PolycrystalGraph):
@@ -1037,18 +1026,4 @@ class PolycrystalVertexEnhancedGraph(PolycrystalGraph):
                 mapping[_vname(secondary_node_idx, shift=True)] = _vname(data["primary"], shift=True)
             nx.relabel_nodes(self.G, mapping, copy=False)
 
-        self.node_schemas = {
-            "0":  {"type": 1, "position": 3},
-            "1":  {"type": 1, "position": 3},
-            "2":  {"type": 1, "position": 3}
-        }
-
-    def _add_node_features(
-        self,
-    ) -> None:
-        ...
-
-    def _add_edge_features(
-        self,
-    ) -> None:
-        ...
+        self.count_nodes_by_type()

@@ -37,18 +37,18 @@ def main():
     # }
     seed = 1
 
-    microstructure = NeperMicrostructure(
-        tesr_directory / name,
-        **parameters,
-        neper_executable=neper_executable,
-        Nx=Nx,
-        Ny=Ny,
-        Nz=Nz,
-        L=L,
-        seed=seed,
-    )
+    # microstructure = NeperMicrostructure(
+    #     tesr_directory / name,
+    #     **parameters,
+    #     neper_executable=neper_executable,
+    #     Nx=Nx,
+    #     Ny=Ny,
+    #     Nz=Nz,
+    #     L=L,
+    #     seed=seed,
+    # )
 
-    microstructure.write_h5(h5_filename, name)
+    # microstructure.write_h5(h5_filename, name)
 
     # erosion = NeperGBErosion(microstructure, interface_thickness)
     
@@ -62,15 +62,25 @@ def main():
 
     tess = NeperTessellation(f"{_PROJECT_ROOT}/data/neper/{name}.tess")
 
-    graph = PolycrystalGrainGraph.from_tess(tess, [], [])
+    graph = PolycrystalGrainGraph.from_tess(tess)
     graph.graph_stats()
+    graph.add_node_attribute(
+        label="test",
+        node_type=0,
+        data=np.arange(graph.node_type_count[0])
+    )
+    graph.scale_edge_attribute(
+        label="distance",
+        scaling_factor=1/interface_thickness
+    )
     # graph.visualize_3d(Path(f"{_PROJECT_ROOT}/data/{name}_grain_graph"), node_feature="type")
     grp = "graph_grains"
     graph.write_h5(Path(f"{_PROJECT_ROOT}/data/{name}_graph"), grp="graph_grains", 
-                   node_attr=[["position", "type"]], edge_attr=["distance", "distance"], 
-                   export_stats=True)
+                   node_attr=[["position", "test", "type"]], edge_attr=["distance", "distance"], 
+                   export_stats=True,
+                   metadata={'interface_thickness': interface_thickness})
     graph.write_xdmf(f"{_PROJECT_ROOT}/data/{name}_graph_{grp}.xdmf", 
-                        node_values={'type': None, 'test': np.zeros(graph.G.number_of_nodes())}, 
+                        node_values={'type': None, 'test': None, 'temp': np.zeros(graph.G.number_of_nodes())}, 
                         edge_values={'test_edges': np.ones(int(graph.G.number_of_edges()/2))})
 
     # graph = PolycrystalFacetEnhancedGraph.from_tess(tess, [], ["distance"])
@@ -79,13 +89,23 @@ def main():
     # # graph.visualize_3d(Path(f"{_PROJECT_ROOT}/data/{name}_facet_graph"), node_feature="type")
     # graph.write_h5(Path(f"{_PROJECT_ROOT}/data/{name}_graph"), grp="graph_facet_enhanced", export_stats=True)
     
-    graph = PolycrystalVertexEnhancedGraph.from_tess(tess, [], ["distance"])
+    graph = PolycrystalVertexEnhancedGraph.from_tess(tess)
     graph.graph_stats()
+    graph.add_node_attribute(
+        label='test',
+        node_type=0,
+        data=np.arange(graph.node_type_count[0])
+    )
+    graph.scale_edge_attribute(
+        label="distance",
+        scaling_factor=1/interface_thickness
+    )
     # graph.visualize_3d(Path(f"{_PROJECT_ROOT}/data/{name}_vertex_graph"), node_feature="type")
     grp = "graph_vertex_enhanced"
     graph.write_h5(Path(f"{_PROJECT_ROOT}/data/{name}_graph"), grp=grp, 
-                   node_attr=[["position", "type"], ["type"], ["position"]], edge_attr=["distance"],
-                   export_stats=True)
+                   node_attr=[["position", "test"], ["position"], ["position"]], edge_attr=["distance"],
+                   export_stats=True,
+                   metadata={'interface_thickness': interface_thickness})
     graph.write_xdmf(f"{_PROJECT_ROOT}/data/{name}_graph_{grp}.xdmf", 
                         node_values={'type': None, 'test': np.zeros(graph.G.number_of_nodes())}, 
                         edge_values={'test_edges': np.ones(int(graph.G.number_of_edges()/2))})
