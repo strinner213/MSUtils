@@ -1,4 +1,5 @@
 from collections import defaultdict
+import numpy as np
 
 def _next_line(i, lines):
     while i < len(lines) and not lines[i].strip():
@@ -215,7 +216,6 @@ class NeperTessellation():
         for gid, facet_ids in polyhedra.items():
             for fid in facet_ids:
                 facet_grains[abs(fid)].add(gid)
-                print(fid, gid)
 
         # edge -> grains
         edge_neighbors = {
@@ -266,6 +266,7 @@ class NeperTessellation():
                 break
 
         if periodic_start is not None:
+            self.periodicity = True
 
             # -----------------------------------------------------------
             # *general
@@ -360,3 +361,30 @@ class NeperTessellation():
             "edge_neighbors": edge_neighbors,
             "periodicity": periodic
         }
+
+    def _get_edge_length(
+        self,
+        edge_id: int,
+    ) -> float:
+        (v_1, v_2) = self.edges[edge_id]
+
+        return np.linalg.norm(np.array(self.vertices[v_1]) - np.array(self.vertices[v_2]))
+
+
+    def _get_facet_surface(
+        self,
+        facet_id: int,
+    ) -> float:
+        sorted_vertices = np.zeros((len(self.facets[facet_id]["edges"]), 3))
+        for i, edge_id in enumerate(self.facets[facet_id]["edges"]):
+            vertices =  self.edges[abs(edge_id)]
+            if edge_id < 0:
+                sorted_vertices[i] = self.vertices[vertices[1]]
+                sorted_vertices[i] = self.vertices[vertices[0]]
+            else:
+                sorted_vertices[i] = self.vertices[vertices[0]]
+                sorted_vertices[i] = self.vertices[vertices[1]]
+
+        return 0.5 * np.linalg.norm(
+            np.sum(np.cross(sorted_vertices, np.roll(sorted_vertices, -1, axis=0)), axis=0)
+        )

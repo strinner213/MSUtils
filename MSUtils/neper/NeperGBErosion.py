@@ -148,11 +148,11 @@ class NeperGBErosion:
                 )
 
         active = np.unique(self.eroded_image[self.eroded_image >= self.num_crystals])
-        mapping = {old: self.num_crystals + i for i, old in enumerate(active)}
-        for old, new in mapping.items():
+        self.mapping_facets = {old: self.num_crystals + i for i, old in enumerate(active)}
+        for old, new in self.mapping_facets.items():
             if old != new:
                 self.eroded_image[self.eroded_image == old] = new
-        self.ridge_metadata = {mapping[tag]: metadata[tag] for tag in active}
+        self.ridge_metadata = {self.mapping_facets[tag]: metadata[tag] for tag in active}
 
     def write_h5(
         self,

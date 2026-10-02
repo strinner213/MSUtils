@@ -1,28 +1,36 @@
 from typing import Self
+from numpy.typing import ArrayLike
+import io
+from collections import defaultdict
+import copy
+from pathlib import Path
 import numpy as np
 import h5py
-from pathlib import Path
-import io
 from PIL import Image
 import matplotlib.pyplot as plt
 from matplotlib.colors import Normalize
 import networkx as nx
-from collections import defaultdict
-import copy
-from numpy.typing import ArrayLike
+from scipy.spatial.transform import Rotation
 
 from MSUtils.neper.NeperTessellation import NeperTessellation
+from MSUtils.neper.NeperMicrostructure import NeperMicrostructure
 from MSUtils.neper.NeperGBErosion import NeperGBErosion
 
 
 def _gname(grain_id: int, shift=False):
     return f'g_{grain_id-int(shift):05}'
 
+def _fname(facet_id: int, shift=False):
+    return f'f_{facet_id-int(shift):05}'
+
 def _vname(vertex_id: int, shift=False):
     return f'v_{vertex_id-int(shift):05}'
 
-def _fname(facet_id: int, shift=False):
-    return f'f_{facet_id-int(shift):05}'
+def _gidx(grain_name: str, shift=False):
+    return int(grain_name[2:]) + int(shift)
+
+def _fidx (facet_name: str, shift=False):
+    return int(facet_name[2:]) + int(shift)
 
 
 class PolycrystalGraph:
@@ -32,6 +40,7 @@ class PolycrystalGraph:
     ) -> Self:
         self.G = nx.MultiDiGraph()
         self.periodicity = periodicity
+        self.node_type_count = []
 
     @classmethod
     def from_tess(
@@ -117,6 +126,25 @@ class PolycrystalGraph:
         for node, value in zip(filtered_nodes, data):
             self.G.nodes[node][label] = value
 
+    def scale_node_attribute(
+            self,
+            label: str,
+            scaling_factor: float
+        ) -> None:
+            for _, data in self.G.nodes(data=True):
+                data[label] = data[label] * scaling_factor
+
+    def add_edge_attribute(
+        self,
+        label: str,
+        data: ArrayLike,
+    ) -> None:
+
+        assert len(data) == len(self.G.edges)
+
+        for edge, value in zip(self.G.edges, data):
+            self.G.edges[edge][label] = value
+
     def scale_edge_attribute(
         self,
         label: str,
@@ -124,6 +152,31 @@ class PolycrystalGraph:
     ) -> None:
         for _, _, data in self.G.edges(data=True):
             data[label] = data[label] * scaling_factor
+
+    def add_grain_diameq(
+        self,
+        microstructure: NeperMicrostructure,
+    ) -> None:
+        self.add_node_attribute(
+            label="diameq",
+            node_type=0,
+            data=microstructure.crystal_diameq
+        )
+
+    def add_grain_orientations(
+        self,
+        microstructure: NeperMicrostructure,
+    ) -> None:
+        q = Rotation.from_matrix(microstructure.rotation_matrices).as_quat()   # shape: (n, 4), [x, y, z, w]
+
+        # Enforce w >= 0 for every quaternion
+        mask = q[:, 3] < 0
+        q[mask] *= -1
+        self.add_node_attribute(
+            label="orientation",
+            node_type=0,
+            data=q
+        )
 
     def graph_stats(
         self,
@@ -401,6 +454,11 @@ class PolycrystalGraph:
         )
         mask = connectivity[:,0] < connectivity[:,1]
         connectivity = connectivity[mask,:]
+        unique_edges = [
+            edge
+            for edge, keep in zip(edges, mask)
+            if keep
+        ]
 
 
         # ------------------------------------------------------------
@@ -500,7 +558,6 @@ class PolycrystalGraph:
                 assert type(node_data) in [np.ndarray, list]
                 assert len(node_data) == n_nodes, f'Invalid input for node values to be displayed: \
                     Provided data has length {len(node_data)} but there are {n_nodes} nodes in the graph.'
-                field_values = node_values
 
             node_values_text = "\n".join(
                 f"{v:.16g}"
@@ -535,15 +592,14 @@ class PolycrystalGraph:
         for i, (edge_label, edge_data) in enumerate(edge_values.items()):
             assert type(edge_label) == str
             if edge_label in edge_attrs:
-                field_values = [
-                    self.G.edges[edge].get(edge_data, np.nan)
-                    for edge in self.G.edges
+                edge_data = [
+                    data.get(edge_label, np.nan)
+                    for (u, v, data) in unique_edges
                 ]
             else:
                 assert type(edge_data) in [np.ndarray, list]
                 assert len(edge_data) == n_edges, f'Invalid input for edge values to be displayed: \
                     Provided data has length {len(edge_data)} but there are {n_edges} edges in the graph.'
-                field_values = edge_values
             
             edge_values_text = "\n".join(
                 f"{v:.16g}"
@@ -553,7 +609,7 @@ class PolycrystalGraph:
             if i == 0:
                 xdmf += """
       <!-- =====================================================
-           Scalar value associated with each node
+           Scalar value associated with each edge
            ===================================================== -->
 """
                  
@@ -689,7 +745,6 @@ class PolycrystalGraph:
                 dset.attrs['max'] = max(degrees)
 
             for key, value in metadata.items():
-                print(key, value)
                 grp.attrs[key] = value
 
         
@@ -730,7 +785,7 @@ class PolycrystalGrainGraph(PolycrystalGraph):
                     distance=(
                         np.array(self.G.nodes[_grain_j]["position"]) - 
                         np.array(self.G.nodes[_grain_i]["position"])),
-                    area=tessellation._get_facet_surface(facet_id)
+                    diameq=tessellation._get_facet_surface(facet_id)**(1/2)
                     )
                 self.G.add_edge(
                     _grain_j, _grain_i,
@@ -738,7 +793,7 @@ class PolycrystalGrainGraph(PolycrystalGraph):
                     distance=(
                         np.array(self.G.nodes[_grain_i]["position"]) - 
                         np.array(self.G.nodes[_grain_j]["position"])),
-                    area=tessellation._get_facet_surface(facet_id)
+                    diameq=tessellation._get_facet_surface(facet_id)**(1/2)
                     )
 
         # ---------------------------------------------------------------
@@ -761,7 +816,7 @@ class PolycrystalGrainGraph(PolycrystalGraph):
                         np.array(self.G.nodes[_grain_i]["position"]) -
                         np.array(data["shift"])
                         ),
-                    area=tessellation._get_facet_surface(data["primary"])
+                    diameq=tessellation._get_facet_surface(data["primary"])**(1/2)
                 )
                 self.G.add_edge(
                     _grain_j, _grain_i,
@@ -771,7 +826,7 @@ class PolycrystalGrainGraph(PolycrystalGraph):
                         np.array(self.G.nodes[_grain_j]["position"]) +
                         np.array(data["shift"])
                         ),
-                    area=tessellation._get_facet_surface(data["primary"])
+                    diameq=tessellation._get_facet_surface(data["primary"])**(1/2)
                 )
 
         self.count_nodes_by_type()
@@ -968,10 +1023,6 @@ class PolycrystalVertexEnhancedGraph(PolycrystalGraph):
                     )
                 )
 
-        # ---------------------------------------------------------------
-        # Enforce periodicity
-        # ---------------------------------------------------------------
-
         # Connect vertices that form an edge
         for edge_id, (v1, v2) in tessellation.edges.items():
             _vertex_i = _vname(v1, shift=True)
@@ -1011,6 +1062,10 @@ class PolycrystalVertexEnhancedGraph(PolycrystalGraph):
                     )
                 ) 
 
+        # ---------------------------------------------------------------
+        # Enforce periodicity
+        # ---------------------------------------------------------------
+
         if self.periodicity:
             # Account for periodic boundary by merging corresponding facet nodes to primary instance
             mapping = {}
@@ -1027,3 +1082,28 @@ class PolycrystalVertexEnhancedGraph(PolycrystalGraph):
             nx.relabel_nodes(self.G, mapping, copy=False)
 
         self.count_nodes_by_type()
+
+    def add_eroded_material_indices(
+        self,
+        tessellation: NeperTessellation,
+        erosion: NeperGBErosion
+    ):
+        grain_nodes = [n for n, data in self.G.nodes(data=True) if data.get("type") == 0]
+        for node in grain_nodes:
+            self.G.nodes[node]["mat_idx_eroded"] = _gidx(node)
+
+        facet_nodes = [n for n, data in self.G.nodes(data=True) if data.get("type") == 1]
+        unique_numbering = {n: i for i, n in enumerate(facet_nodes)}
+
+        # Make sure that grain neighbors of the mapped facets match
+        for node in facet_nodes:
+            self.G.nodes[node]["mat_idx_eroded"] = erosion.mapping_facets.get(unique_numbering[node] + self.node_type_count[0], np.nan)
+            if not np.isnan(self.G.nodes[node]["mat_idx_eroded"]):
+                _, i, j = erosion.ridge_metadata[self.G.nodes[node]["mat_idx_eroded"]]
+                orig = tessellation.facet_grains[_fidx(node, shift=True)]
+
+                assert (
+                    (len(orig) == 1 and ((i + 1 in orig) or (j + 1 in orig)))
+                    or
+                    (len(orig) == 2 and ((i + 1 in orig) and (j + 1 in orig)))
+                )

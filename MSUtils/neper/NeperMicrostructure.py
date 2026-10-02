@@ -1,5 +1,6 @@
 import subprocess
 from pathlib import Path
+import os
 
 import h5py
 import numpy as np
@@ -45,7 +46,10 @@ class NeperMicrostructure(MicrostructureImage):
         crystal_symmetry,
         seed,
         extra_args=(),
+        num_threads=8,
     ):
+        env = os.environ.copy()
+        env["OMP_NUM_THREADS"] = f"{num_threads}"
         output_stem = Path(output_stem).resolve()
         output_stem.parent.mkdir(parents=True, exist_ok=True)
         command = [
@@ -74,14 +78,14 @@ class NeperMicrostructure(MicrostructureImage):
             "-statface",
             "polys,vernb,vercoos",
             "-statcell",
-            "coo,vol,area,sphericity,facenb",
+            "coo,vol,area,diameq,sphericity,anisofact,facenb",
             *map(str, extra_args),
             "-format",
             "tess,tesr,obj",
             "-o",
             output_stem.name,
         ]
-        subprocess.run(command, check=True, cwd=output_stem.parent)
+        subprocess.run(command, check=True, cwd=output_stem.parent, env=env)
 
         self.tesr_filename = output_stem.with_suffix(".tesr")
         with self.tesr_filename.open("rb") as file:
@@ -139,7 +143,9 @@ class NeperMicrostructure(MicrostructureImage):
         self.crystal_volumes = stats[:, 3]  # Exact cell volumes.
         self.crystal_surface_areas = stats[:, 4]  # Total cell surface areas.
         self.crystal_sphericities = stats[:, 5]  # Equal-volume sphere area / area.
-        self.crystal_face_counts = stats[:, 6].astype(int)  # Faces per cell.
+        self.crystal_diameq = stats[:, 6]  # Equal-volume sphere diameter.
+        self.crystal_anisofact = stats[:, 7]  # Anisotropy factor.
+        self.crystal_face_counts = stats[:, 8].astype(int)  # Faces per cell.
 
         self.interface_area = 0.0
         self.Ltensor = np.zeros((3, 3))  # Area-weighted second normal moment.
