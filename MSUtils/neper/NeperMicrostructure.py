@@ -78,7 +78,7 @@ class NeperMicrostructure(MicrostructureImage):
             "-statface",
             "polys,vernb,vercoos",
             "-statcell",
-            "coo,vol,area,diameq,sphericity,anisofact,facenb",
+            "coo,vol,area,sphericity,diameq,anisofact,facenb",
             *map(str, extra_args),
             "-format",
             "tess,tesr,obj",
