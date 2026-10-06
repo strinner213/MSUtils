@@ -142,8 +142,8 @@ class PolycrystalGraph:
 
         assert len(data) == len(self.G.edges), f'{len(self.G.edges)} edges found, {len(data)} values provided.'
 
-        for edge, value in zip(self.G.edges, data):
-            self.G.edges[edge][label] = value
+        for (_, _, attr), value in zip(sorted(self.G.edges(data=True), key=lambda e: e[2]["edge_idx"]), data):
+            attr[label] = value
 
     def scale_edge_attribute(
         self,
@@ -678,7 +678,7 @@ class PolycrystalGraph:
         edges = []
         E = []
 
-        for u, v, data in self.G.edges(data=True):
+        for u, v, data in sorted(self.G.edges(data=True), key=lambda e: e[2]["edge_idx"]):
             i, j = node_to_idx[u], node_to_idx[v]
             features = np.concatenate([
                 np.atleast_1d(data.get(f, 0)).ravel()
@@ -784,7 +784,8 @@ class PolycrystalGrainGraph(PolycrystalGraph):
                     distance=(
                         np.array(self.G.nodes[_grain_j]["position"]) - 
                         np.array(self.G.nodes[_grain_i]["position"])),
-                    diameq=tessellation._get_facet_surface(facet_id)**(1/2)
+                    diameq=tessellation._get_facet_surface(facet_id)**(1/2),
+                    edge_idx=facet_id-1
                     )
                 self.G.add_edge(
                     _grain_j, _grain_i,
@@ -792,7 +793,8 @@ class PolycrystalGrainGraph(PolycrystalGraph):
                     distance=(
                         np.array(self.G.nodes[_grain_i]["position"]) - 
                         np.array(self.G.nodes[_grain_j]["position"])),
-                    diameq=tessellation._get_facet_surface(facet_id)**(1/2)
+                    diameq=tessellation._get_facet_surface(facet_id)**(1/2),
+                    edge_idx=facet_id-1
                     )
 
         # ---------------------------------------------------------------
@@ -801,7 +803,7 @@ class PolycrystalGrainGraph(PolycrystalGraph):
 
         if self.periodicity:
             # Wrap around periodic boundary
-            for secondary_node_idx, data in tessellation.periodicity["facets"].items():
+            for i, (secondary_node_idx, data) in enumerate(tessellation.periodicity["facets"].items()):
                 assert len( tessellation.facet_grains[data["primary"]]) == 1
                 _grain_i = _gname(tessellation.facet_grains[data["primary"]].pop(), shift=True)
                 assert len(tessellation.facet_grains[secondary_node_idx]) == 1
@@ -815,7 +817,8 @@ class PolycrystalGrainGraph(PolycrystalGraph):
                         np.array(self.G.nodes[_grain_i]["position"]) -
                         np.array(data["shift"])
                         ),
-                    diameq=tessellation._get_facet_surface(data["primary"])**(1/2)
+                    diameq=tessellation._get_facet_surface(data["primary"])**(1/2),
+                    edge_idx=len(tessellation.facet_grains)+i
                 )
                 self.G.add_edge(
                     _grain_j, _grain_i,
@@ -825,7 +828,8 @@ class PolycrystalGrainGraph(PolycrystalGraph):
                         np.array(self.G.nodes[_grain_j]["position"]) +
                         np.array(data["shift"])
                         ),
-                    diameq=tessellation._get_facet_surface(data["primary"])**(1/2)
+                    diameq=tessellation._get_facet_surface(data["primary"])**(1/2),
+                    edge_idx=len(tessellation.facet_grains)+i
                 )
 
         self.count_nodes_by_type()
@@ -1003,6 +1007,7 @@ class PolycrystalVertexEnhancedGraph(PolycrystalGraph):
         # ---------------------------------------------------------------
 
         # Connect facets to grains they separate
+        i = 0
         for facet_id, grains in tessellation.facet_grains.items():
             for _ in range(len(grains)):
                 _facet_i = _fname(facet_id, shift=True)
@@ -1012,15 +1017,18 @@ class PolycrystalVertexEnhancedGraph(PolycrystalGraph):
                     distance=(
                         np.array(self.G.nodes[_grain_j]["position"]) -
                         np.array(self.G.nodes[_facet_i]["position"])
-                    )
+                    ),
+                    edge_idx=i
                 )
                 self.G.add_edge(
                     _grain_j, _facet_i,
                     distance=(
                         np.array(self.G.nodes[_facet_i]["position"]) -
                         np.array(self.G.nodes[_grain_j]["position"])
-                    )
+                    ),
+                    edge_idx=i
                 )
+                i += 1
 
         # Connect vertices that form an edge
         for edge_id, (v1, v2) in tessellation.edges.items():
@@ -1031,15 +1039,18 @@ class PolycrystalVertexEnhancedGraph(PolycrystalGraph):
                 distance=(
                     np.array(self.G.nodes[_vertex_j]["position"]) -
                     np.array(self.G.nodes[_vertex_i]["position"])
-                )
+                ),
+                edge_idx=i
             )
             self.G.add_edge(
                 _vertex_j, _vertex_i,
                 distance=(
                     np.array(self.G.nodes[_vertex_i]["position"]) -
                     np.array(self.G.nodes[_vertex_j]["position"])
-                )
+                ),
+                edge_idx=i
             )
+            i += 1
 
         # Connect vertices to the centroid of the facet they form
         for facet_id, facet in tessellation.facets.items():
@@ -1051,15 +1062,18 @@ class PolycrystalVertexEnhancedGraph(PolycrystalGraph):
                     distance=(
                         np.array(self.G.nodes[_vertex_j]["position"]) -
                         np.array(self.G.nodes[_facet_i]["position"])
-                    )
+                    ),
+                    edge_idx=i
                 )
                 self.G.add_edge(
                     _vertex_j, _facet_i,
                     distance=(
                         np.array(self.G.nodes[_facet_i]["position"]) -
                         np.array(self.G.nodes[_vertex_j]["position"])
-                    )
-                ) 
+                    ),
+                    edge_idx=i
+                )
+                i += 1
 
         # ---------------------------------------------------------------
         # Enforce periodicity

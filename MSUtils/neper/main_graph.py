@@ -88,7 +88,7 @@ def main():
     # graph.visualize_3d(Path(f"{_PROJECT_ROOT}/data/{name}_grain_graph"), node_feature="type")
     grp = "graph_grains"
     graph.write_h5(Path(f"{_PROJECT_ROOT}/data/{name}_graph"), grp="graph_grains", 
-                   node_attr=[["position", "diameq", "orientation"]], edge_attr=["distance", "diameq"], 
+                   node_attr=[["position", "diameq", "orientation"]], edge_attr=["distance", "diameq", "edge_idx"], 
                    export_stats=True,
                    metadata={'interface_thickness': interface_thickness})
     graph.write_xdmf(f"{_PROJECT_ROOT}/data/{name}_graph_{grp}.xdmf", 
@@ -115,7 +115,7 @@ def main():
                    node_attr=[
                        ["position", "test", "orientation", "mat_idx_eroded"], 
                        ["position", "mat_idx_eroded"], 
-                       ["position"]], edge_attr=["distance"],
+                       ["position"]], edge_attr=["distance", "edge_idx"],
                    export_stats=True,
                    metadata={'interface_thickness': interface_thickness})
     graph.write_xdmf(f"{_PROJECT_ROOT}/data/{name}_graph_{grp}.xdmf", 
