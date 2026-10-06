@@ -66,7 +66,7 @@ def main():
             microstructure_length=L[::-1],
         )
 
-    tess = NeperTessellation(f"{_PROJECT_ROOT}/data/neper/{name}.tess")
+    tess = NeperTessellation(Path(f"{_PROJECT_ROOT}/data/neper/{name}"))
 
     graph = PolycrystalGrainGraph.from_tess(tess)
     graph.graph_stats()

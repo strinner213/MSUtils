@@ -16,9 +16,9 @@ def _section(name, lines):
 class NeperTessellation():
     def __init__(
         self,
-        filename,
+        input_stem,
     ):
-        data = self._parse_neper_tess(filename)
+        data = self._parse_neper_tess(input_stem.with_suffix('.tess'))
 
         self.seeds = data["seeds"]
         self.seed_data = data["seed_data"]
@@ -33,6 +33,8 @@ class NeperTessellation():
 
         self.periodicity = data["periodicity"]
 
+        stats = np.loadtxt(input_stem.with_suffix(".stcell"), ndmin=2)
+        self.crystal_centroids = stats[:, :3]  # Cell centroids
 
     def _parse_neper_tess(self, filename):
 

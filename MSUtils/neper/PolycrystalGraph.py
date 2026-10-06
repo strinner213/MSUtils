@@ -121,7 +121,7 @@ class PolycrystalGraph:
             if data.get("type") == node_type
         ])
 
-        assert len(data) == len(filtered_nodes)
+        assert len(data) == len(filtered_nodes), f'{len(filtered_nodes)} nodes of type {node_type} found, but {len(data)} values provided.'
 
         for node, value in zip(filtered_nodes, data):
             self.G.nodes[node][label] = value
@@ -140,7 +140,7 @@ class PolycrystalGraph:
         data: ArrayLike,
     ) -> None:
 
-        assert len(data) == len(self.G.edges)
+        assert len(data) == len(self.G.edges), f'{len(self.G.edges)} edges found, {len(data)} values provided.'
 
         for edge, value in zip(self.G.edges, data):
             self.G.edges[edge][label] = value
@@ -762,11 +762,10 @@ class PolycrystalGrainGraph(PolycrystalGraph):
         # Add one node per grain (position given by seed in tessellation)
         self.G.add_nodes_from(
             (_gname(grain_id, shift=True), 
-             {"position": grain_data, 
+             {"position": tessellation.crystal_centroids[grain_id-1], 
               "type": 0,
-              "boundary": 0,
-              "mat_idx": grain_id})
-            for grain_id, grain_data in tessellation.seeds.items()
+              "mat_idx": grain_id-1})
+            for grain_id, _ in tessellation.seeds.items()
         )
 
         # ---------------------------------------------------------------
@@ -980,9 +979,9 @@ class PolycrystalVertexEnhancedGraph(PolycrystalGraph):
         # Add one node per grain (position given by seed in tessellation)
         self.G.add_nodes_from(
             (_gname(grain_id, shift=True), 
-             {"position": grain_data, 
+             {"position": tessellation.crystal_centroids[grain_id-1], 
               "type": 0})
-            for grain_id, grain_data in tessellation.seeds.items()
+            for grain_id, _ in tessellation.seeds.items()
         )
         # Add one node per facet (compute centroid for position)
         self.G.add_nodes_from(
@@ -1070,14 +1069,8 @@ class PolycrystalVertexEnhancedGraph(PolycrystalGraph):
             # Account for periodic boundary by merging corresponding facet nodes to primary instance
             mapping = {}
             for secondary_node_idx, data in tessellation.periodicity["facets"].items():
-                # Make sure that nodes to be merged do not have common edges (might alter attributes)
-                assert len([x for x in list(self.G.neighbors(_fname(data["primary"], shift=True))) 
-                            if x in list(self.G.neighbors(_fname(secondary_node_idx, shift=True)))]) == 0
                 mapping[_fname(secondary_node_idx, shift=True)] = _fname(data["primary"], shift=True)
             for secondary_node_idx, data in tessellation.periodicity["vertices"].items():
-                # Make sure that nodes to be merged do not have common edges (might alter attributes)
-                assert len([x for x in list(self.G.neighbors(_vname(data["primary"], shift=True))) 
-                            if x in list(self.G.neighbors(_vname(secondary_node_idx, shift=True)))]) == 0
                 mapping[_vname(secondary_node_idx, shift=True)] = _vname(data["primary"], shift=True)
             nx.relabel_nodes(self.G, mapping, copy=False)
 
@@ -1090,12 +1083,16 @@ class PolycrystalVertexEnhancedGraph(PolycrystalGraph):
     ):
         grain_nodes = [n for n, data in self.G.nodes(data=True) if data.get("type") == 0]
         for node in grain_nodes:
-            self.G.nodes[node]["mat_idx_eroded"] = _gidx(node)
+            if np.sum(erosion.eroded_image == _gidx(node)) > 0:
+                self.G.nodes[node]["mat_idx_eroded"] = _gidx(node)
+            else:
+                # Grain has zero volume fraction in eroded image (vanished phase)
+                self.G.nodes[node]["mat_idx_eroded"] = np.nan
 
         facet_nodes = [n for n, data in self.G.nodes(data=True) if data.get("type") == 1]
         unique_numbering = {n: i for i, n in enumerate(facet_nodes)}
 
-        # Make sure that grain neighbors of the mapped facets match
+        # Make sure that grain neighbors of the mapped facets match (computationally not needed)
         for node in facet_nodes:
             self.G.nodes[node]["mat_idx_eroded"] = erosion.mapping_facets.get(unique_numbering[node] + self.node_type_count[0], np.nan)
             if not np.isnan(self.G.nodes[node]["mat_idx_eroded"]):
